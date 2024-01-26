@@ -1,0 +1,12 @@
+stateless
+aiohttp
+schema
+aio_pika
+surrealdb
+croniter
+redis
+sqlmodel
+psycopg2
+asyncpg
+marshmallow_dataclass
+icecream
