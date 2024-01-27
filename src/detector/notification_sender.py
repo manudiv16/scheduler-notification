@@ -1,15 +1,13 @@
+import json
 import asyncio
 import logging
 import aio_pika
-from aio_pika.pool import Pool
-from aio_pika.exchange import Exchange
-from aio_pika.message import Message
-from aio_pika import Channel
-from aio_pika import Queue
-import json
-from typing import Any
 
+from typing import Any
+from aio_pika import Queue
+from aio_pika.pool import Pool
 from notification import Notification
+from aio_pika.exchange import Exchange
 
 RABBIT_URI = "amqp://guest:guest@localhost/"
 DEAD_LETTER_EXCHANGE = "dead-letter-exchange"
@@ -31,8 +29,8 @@ class NotificationSender:
         self.amqp_url = amqp_url
         self.dead_letter_exchange = dead_letter_exchange
         self.loop = asyncio.get_event_loop()
-        self.connection_pool = Pool(self.get_connection, max_size=2, loop=self.loop)
-        self.channel_pool = Pool(self.get_channel, max_size=10, loop=self.loop)
+        self.connection_pool: Pool = Pool(self.get_connection, max_size=2, loop=self.loop)
+        self.channel_pool: Pool = Pool(self.get_channel, max_size=10, loop=self.loop)
 
     async def get_connection(self):
         return await aio_pika.connect_robust(self.amqp_url)
@@ -74,7 +72,7 @@ class NotificationSender:
                 logger.error(f"error: {e}")
                 await dle.publish(
                     aio_pika.Message(
-                        body=body,
+                        body=body_json,
                         delivery_mode=aio_pika.DeliveryMode.PERSISTENT
                     ),
                     routing_key

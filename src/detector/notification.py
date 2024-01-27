@@ -1,18 +1,19 @@
-from dataclasses import dataclass
+import marshmallow_dataclass
+
 from enum import Enum
-from typing import Any, Dict, Optional, Tuple, Union
 from uuid import UUID
 from datetime import datetime
 from croniter import croniter
+from dataclasses import dataclass
+from typing import Any, Dict, Optional
+from returns.result import Failure, Success, Result
 from marshmallow import ValidationError, validates_schema
-import marshmallow_dataclass
 
 class NotificationStatus(Enum):
     WAITING = 1
     SENDED = 2
     EXPIRED = 3
     SEND = 4
-    ERROR = 5
 
 @dataclass(frozen=True)
 class Notification:
@@ -21,9 +22,9 @@ class Notification:
     notification_sender: str
     message_title: str
     message_body: str
-    schedule_expression: Optional[str]
-    next_time: Optional[int]
-    date: Optional[datetime]
+    schedule_expression: Optional[str]  = None
+    next_time: Optional[int] = None
+    date: Optional[datetime] = None
     expiration_date_str: Optional[str] = None
     expiration_date: Optional[datetime] = datetime.fromisoformat(expiration_date_str) if expiration_date_str else None
 
@@ -37,17 +38,12 @@ class Notification:
         if schedule_expression is None and date is None:
             raise ValidationError("Either 'schedule_expression' or 'date' must be provided.", field_names=['schedule_expression', 'date'])
             
-ThrowNotificationStatus = Union[NotificationStatus, Tuple[NotificationStatus, Exception]]
-MaybeNotification = Optional[Notification]
-ThrowNotification = Union[MaybeNotification, Tuple[MaybeNotification, Exception]]
-
-
-def json_to_notification(json: Dict[str, Any]) -> ThrowNotification: 
+def json_to_notification(json: Dict[str, Any]) -> Result[Notification, ValidationError] : 
     try:
         notification_schema = marshmallow_dataclass.class_schema(Notification)()
-        return notification_schema.load(dict(json))
+        return Success(notification_schema.load(dict(json)))
     except ValidationError as err:
-        return (None, err)
+        return Failure(err)
 
 
 def match(notification: Notification, now: datetime) -> bool:
@@ -60,8 +56,8 @@ def match(notification: Notification, now: datetime) -> bool:
     return False
 
 def expired(notification: Notification, now: datetime) -> bool:
-    expiration_date: datetime = notification.expiration_date
-    date: datetime = notification.date
+    expiration_date: Optional[datetime] = notification.expiration_date
+    date: Optional[datetime]  = notification.date
 
     if expiration_date:
         return expiration_date < now

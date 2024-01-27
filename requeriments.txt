@@ -10,3 +10,5 @@ psycopg2
 asyncpg
 marshmallow_dataclass
 icecream
+returns
+asyncpg-stubs

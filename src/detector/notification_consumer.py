@@ -5,7 +5,10 @@ from aio_pika import Channel
 import json
 from typing import Any
 from notification_db import NotificationDBHandler
-from notification import json_to_notification
+from notification import Notification, json_to_notification
+from aio_pika.connection import AbstractConnection
+from returns.result import Failure, Success
+from returns.future import FutureResultE, future_safe
 
 RABBIT_URI = "amqp://guest:guest@localhost/"
 
@@ -16,18 +19,20 @@ class NotificationConsumer:
         self.rabbitmq_request_queue = rabbitmq_request_queue
         self.amqp_url = amqp_url
         self.loop = asyncio.get_event_loop()
-        self.connection_pool = Pool(self.get_connection, max_size=2, loop=self.loop)
-        self.channel_pool = Pool(self.get_channel, max_size=10, loop=self.loop)
+        self.connection_pool: Pool = Pool(self.get_connection, max_size=2, loop=self.loop)
+        self.channel_pool: Pool = Pool(self.get_channel, max_size=10, loop=self.loop)
 
 
-    async def get_connection(self):
+    async def get_connection(self) -> AbstractConnection:
         return await aio_pika.connect_robust(self.amqp_url)
-    
+
     async def get_channel(self) -> Channel:
         async with self.connection_pool.acquire() as connection:
             return await connection.channel()
         
     async def consume(self, connection: NotificationDBHandler) -> None:
+        def send(notification: Notification):
+            return connection.insert_notification(notification)
         await connection.create_pool()
         async with self.channel_pool.acquire() as channel: 
             while True:
@@ -45,17 +50,16 @@ class NotificationConsumer:
                         msg = message.body
                         msg = json.loads(msg)
                         notifi = json_to_notification(msg)
+                        notifi = notifi.map(send)
                         match notifi:
-                            case (None, err):
+                            case Failure(err):
                                 print(err)
-                            case notifi:
+                            case Success(noti):
                                 print("ok")
-                                await connection.insert_notification(notifi)
-                        # await publish(msg)
                         await message.ack()
 
                 await asyncio.sleep(0.1)
-        
+
 
 
 if __name__ == "__main__":
