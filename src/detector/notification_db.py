@@ -3,6 +3,8 @@ import asyncpg
 import asyncio
 from asyncpg import exceptions
 
+from notification import Notification
+
 class NotificationDBHandler:
     def __init__(self, dbname, user, password, host, port):
         self.dbname = dbname
@@ -47,9 +49,7 @@ class NotificationDBHandler:
         '''
         async with self.pool.acquire() as connection:
             await connection.execute(create_table_query)
-
-    async def insert_notification(self, notification_id, message_body, message_title, notification_sender, schedule_expression, user_id,
-                                  next_time=None, date=None, expiration_date=None):
+    async def insert_notification(self, notification: Notification):
         insert_query = '''
             INSERT INTO notifications (
                 id, message_body, message_title, notification_sender, schedule_expression, user_id,
@@ -60,13 +60,35 @@ class NotificationDBHandler:
         try:
             async with self.pool.acquire() as connection:
                 await connection.execute(insert_query, 
-                    notification_id, message_body, message_title, notification_sender,
-                    schedule_expression, user_id, next_time, date, expiration_date
+                    notification.id, notification.message_body, notification.message_title, notification.notification_sender,
+                    notification.schedule_expression, notification.user_id, notification.next_time, notification.date, notification.expiration_date
                 )
-            return notification_id
-        except exceptions.UniqueViolationError:
+            print('insertado')
+            return notification.id
+        
+        except exceptions.UniqueViolationError as e:
             # Handle unique constraint violation (if needed)
+            print(f'error: {e}')
             return None
+    # async def insert_notification(self, notification_id, message_body, message_title, notification_sender, schedule_expression, user_id,
+    #                               next_time=None, date=None, expiration_date=None):
+    #     insert_query = '''
+    #         INSERT INTO notifications (
+    #             id, message_body, message_title, notification_sender, schedule_expression, user_id,
+    #             next_time, date, expiration_date
+    #         )
+    #         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9);
+    #     '''
+    #     try:
+    #         async with self.pool.acquire() as connection:
+    #             await connection.execute(insert_query, 
+    #                 notification_id, message_body, message_title, notification_sender,
+    #                 schedule_expression, user_id, next_time, date, expiration_date
+    #             )
+    #         return notification_id
+    #     except exceptions.UniqueViolationError:
+    #         # Handle unique constraint violation (if needed)
+    #         return None
         
     async def get_first_notification_by_next_time(self, time=1):
         select_query = '''
@@ -156,20 +178,20 @@ async def main():
 
 
     await db_handler.create_notification_table()
-    import uuid
-    for _ in range(10):
-        print('insertando')
-        notification_id = uuid.uuid4()
-        user_id = uuid.uuid4()
-        random_number_from_1_to_10 = str(random.randint(1, 10))
-        notification_id = await db_handler.insert_notification(
-            notification_id=notification_id,
-            message_body='test',
-            message_title=f'cada {random_number_from_1_to_10} min',
-            notification_sender='test2',
-            schedule_expression=f"*/{random_number_from_1_to_10} * * * *",
-            user_id=user_id
-        )
+    # import uuid
+    # for _ in range(10):
+    #     print('insertando')
+    #     notification_id = uuid.uuid4()
+    #     user_id = uuid.uuid4()
+    #     random_number_from_1_to_10 = str(random.randint(1, 10))
+    #     notification_id = await db_handler.insert_notification(
+    #         notification_id=notification_id,
+    #         message_body='test',
+    #         message_title=f'cada {random_number_from_1_to_10} min',
+    #         notification_sender='test2',
+    #         schedule_expression=f"*/{random_number_from_1_to_10} * * * *",
+    #         user_id=user_id
+    #     )
 
 
     notifications = await db_handler.get_all_notifications()
@@ -189,11 +211,13 @@ async def main():
 
     # Eliminar una notificación
     # await db_handler.delete_notification(notification_id)
-    # await db_handler.delete_all_notifications()
+    await db_handler.delete_all_notifications()
     # notifications = await db_handler.get_notifications(user_id=1)
     # print(notifications)
     # Cerrar la conexión
     await db_handler.close_pool()
+
+
 
 # Ejecutar el bucle de eventos de asyncio
 if __name__ == "__main__":

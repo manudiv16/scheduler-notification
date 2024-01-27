@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import Union, Tuple
 from notification_sender import NotificationSender
-from notification import Notification, NotificationStatus, json_to_notification
+from notification import Notification, NotificationStatus, json_to_notification, ThrowNotificationStatus
 import notification as noti
 from notification_db import NotificationDBHandler
 from datetime import datetime
@@ -11,7 +11,6 @@ import logging
 import redis
 
 
-ThrowNotification = Union[NotificationStatus, Tuple[NotificationStatus, Exception]]
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("notification_detector")
 logging.getLogger("websockets.client").setLevel(logging.WARNING)
@@ -20,32 +19,36 @@ logging.getLogger("websockets.client").setLevel(logging.WARNING)
 class Notification_detector:
     clustering: bool = False
     
-    async def run(self, connection: NotificationDBHandler, sender: NotificationSender):
-        logger.debug("Notification detector is running")
+    async def run(self, connection: NotificationDBHandler, sender: NotificationSender) -> None:
+        logger.info("Notification detector is running")
         await connection.create_pool()
         await self.__app(connection, sender)
 
     @loopwait(60)
-    async def __app(self, connection: NotificationDBHandler, sender: NotificationSender):
+    async def __app(self, connection: NotificationDBHandler, sender: NotificationSender) -> None:
         async for batch in connection.get_all_notifications_batch():
-            notifications = map(lambda x : json_to_notification(x), batch)
-            await asyncio.gather(*(run(x, connection, sender, self.clustering) for x in notifications))
+            await asyncio.gather(*(run(json_to_notification(x), connection, sender, self.clustering) for x in batch))
             
 async def run(notification: Notification, connectiondb: NotificationDBHandler, sender: NotificationSender, clustering: bool) -> None:
-    now = datetime.now().replace(second=0, microsecond=0)
-    status = handler_status(notification, now)
-    if clustering:
-        redis_client = redis.Redis(host='localhost', port=6379, db=0)
-        notification_id_str = str(notification.id)
-        if redis_client.set(notification_id_str, 1, ex=10, nx=True):
-            await handler(status, notification, connectiondb, sender, now)
-            redis_client.delete(notification_id_str)
-        else:
-            logger.debug(f"the notify {notification.id} is being processed by another worker")
-    else:
-        await handler(status, notification, connectiondb, sender, now)
+    match notification:
+        case (None, err):
+            logger.error(f"error: {err}")
+            logger.info(f"the notify has error")
+        case notification:
+            now = datetime.now().replace(second=0, microsecond=0)
+            status = handler_status(notification, now)
+            if clustering:
+                redis_client = redis.Redis(host='localhost', port=6379, db=0)
+                notification_id_str = str(notification.id)
+                if redis_client.set(notification_id_str, 1, ex=10, nx=True):
+                    await handler(status, notification, connectiondb, sender, now)
+                    redis_client.delete(notification_id_str)
+                else:
+                    logger.debug(f"the notify {notification.id} is being processed by another worker")
+            else:
+                await handler(status, notification, connectiondb, sender, now)
 
-async def handler(status: ThrowNotification, notification: Notification, connectiondb: NotificationDBHandler, sender: NotificationSender, now: datetime) -> None:
+async def handler(status: ThrowNotificationStatus, notification: Notification, connectiondb: NotificationDBHandler, sender: NotificationSender, now: datetime) -> None:
     match status:
         case NotificationStatus.EXPIRED:
             logger.debug(f"the notify {notification.id} has expired")
@@ -63,11 +66,11 @@ async def handler(status: ThrowNotification, notification: Notification, connect
             await sender.publish(notification)
         case (NotificationStatus.ERROR, error):
             logger.error(f"error: {error}")
-            logger.debug(f"the notify {notification.id} has error")
+            logger.info(f"the notify {notification.id} has error")
 
 
 
-def handler_status(notification: Notification, now: datetime) -> ThrowNotification:
+def handler_status(notification: Notification, now: datetime) -> ThrowNotificationStatus:
     try:
         if noti.expired(notification, now):
             return NotificationStatus.EXPIRED
