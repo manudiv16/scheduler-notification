@@ -1,14 +1,16 @@
+import json
 import asyncio
 import aio_pika
+
 from aio_pika.pool import Pool
 from aio_pika import Channel
-import json
 from typing import Any
+from returns.io import IOResultE
 from notification_db import NotificationDBHandler
+from returns.future import Future
 from notification import Notification, json_to_notification
 from aio_pika.connection import AbstractConnection
 from returns.result import Failure, Success
-from returns.future import FutureResultE, future_safe
 
 RABBIT_URI = "amqp://guest:guest@localhost/"
 
@@ -32,7 +34,7 @@ class NotificationConsumer:
         
     async def consume(self, connection: NotificationDBHandler) -> None:
         def send(notification: Notification):
-            return connection.insert_notification(notification)
+            return connection.add(notification)
         await connection.create_pool()
         async with self.channel_pool.acquire() as channel: 
             while True:
@@ -50,7 +52,11 @@ class NotificationConsumer:
                         msg = message.body
                         msg = json.loads(msg)
                         notifi = json_to_notification(msg)
-                        notifi = notifi.map(send)
+                        hola = Future.do(
+                            await send(notifi)
+                            for notifi in notifi
+                        )
+                        await hola
                         match notifi:
                             case Failure(err):
                                 print(err)

@@ -38,12 +38,6 @@ class Notification:
         if schedule_expression is None and date is None:
             raise ValidationError("Either 'schedule_expression' or 'date' must be provided.", field_names=['schedule_expression', 'date'])
             
-def json_to_notification(json: Dict[str, Any]) -> Result[Notification, ValidationError] : 
-    try:
-        notification_schema = marshmallow_dataclass.class_schema(Notification)()
-        return Success(notification_schema.load(dict(json)))
-    except ValidationError as err:
-        return Failure(err)
 
 
 def match(notification: Notification, now: datetime) -> bool:
@@ -77,3 +71,24 @@ def if_sent(notification: Notification, now: datetime) -> bool:
 def get_next_time(expression: str, now: datetime) -> datetime:
     cron = croniter(expression, now)
     return cron.get_next(datetime)
+
+def get_status(notification: Notification, now: datetime) -> Result[NotificationStatus, Any]:
+    try:
+        if expired(notification, now):
+            return Success(NotificationStatus.EXPIRED)
+        elif match(notification, now):
+            if if_sent(notification, now):
+                return Success(NotificationStatus.SENDED)
+            else:
+                return Success(NotificationStatus.SEND)
+        else:
+            return Success(NotificationStatus.WAITING)
+    except Exception as err:
+        return Failure(err)
+    
+def json_to_notification(json: Dict[str, Any]) -> Result[Notification, ValidationError] : 
+    try:
+        notification_schema = marshmallow_dataclass.class_schema(Notification)()
+        return Success(notification_schema.load(dict(json)))
+    except ValidationError as err:
+        return Failure(err)

@@ -1,10 +1,12 @@
+import contextlib
 import random
 import asyncpg
 import asyncio
-from typing import List
+from typing import Any, AsyncGenerator, List
 from returns.future import future_safe
+from returns.result import Result
 
-from notification import Notification
+from notification import Notification, json_to_notification
 
 class NotificationDBHandler:
     def __init__(self, dbname, user, password, host, port):
@@ -15,12 +17,14 @@ class NotificationDBHandler:
         self.port = port
         self.pool = None
 
-    async def __enter__(self):
-        self.pool = self.create_pool()
-        return self
- 
-    async def __exit__(self, *args):
-        await self.close_pool()
+    @contextlib.contextmanager
+    async def connection(self):
+        await self.create_pool()
+        try:
+            yield 
+        finally:
+            await self.close_pool()
+    
 
     async def create_pool(self):
         self.pool = await asyncpg.create_pool(
@@ -34,7 +38,7 @@ class NotificationDBHandler:
     async def close_pool(self):
         await self.pool.close()
 
-    async def create_notification_table(self):
+    async def create_notification_table(self) -> None:
         create_table_query = '''
             CREATE TABLE IF NOT EXISTS notifications (
                 id UUID PRIMARY KEY,
@@ -52,7 +56,7 @@ class NotificationDBHandler:
             await connection.execute(create_table_query)
 
     @future_safe
-    async def insert_notification(self, notification: Notification):
+    async def add(self, notification: Notification):
         insert_query = '''
             INSERT INTO notifications (
                 id, message_body, message_title, notification_sender, schedule_expression, user_id,
@@ -66,30 +70,19 @@ class NotificationDBHandler:
                 notification.schedule_expression, notification.user_id, notification.next_time, notification.date, notification.expiration_date
             )
         return notification.id
-        
 
-        
-    async def get_first_notification_by_next_time(self, time=1):
-        select_query = '''
-            SELECT * FROM notifications
-            ORDER BY next_time
-            LIMIT 1;
-        '''
-        async with self.pool.acquire() as connection:
-            row = await connection.fetchrow(select_query)
-            return row
-
-
-    async def get_notifications(self, user_id) -> List[dict[str, str]]:
+    @future_safe
+    async def get_notifications(self, user_id) -> List[Result[Notification, Any]]:
         select_query = '''
             SELECT * FROM notifications
             WHERE user_id = $1;
         '''
         async with self.pool.acquire() as connection:
-            return await connection.fetch(select_query, user_id)
+            notifications = [ json_to_notification(x) for x in connection.fetch(select_query, user_id) ]
+            return notifications
 
     async def update_notification(self, notification_id, message_body, message_title, notification_sender, 
-                                  schedule_expression, next_time=None, date=None, expiration_date=None):
+                                  schedule_expression, next_time=None, date=None, expiration_date=None) -> None:
         update_query = '''
             UPDATE notifications
             SET message_body = $1, message_title = $2, notification_sender = $3, 
@@ -102,7 +95,7 @@ class NotificationDBHandler:
                 next_time, date, expiration_date, notification_id
             )
     
-    async def update_notification_next_time(self, notification_id, next_time):
+    async def update_notification_next_time(self, notification_id, next_time) -> None:
         update_query = '''
             UPDATE notifications
             SET next_time = $1
@@ -111,7 +104,7 @@ class NotificationDBHandler:
         async with self.pool.acquire() as connection:
             await connection.execute(update_query, next_time, notification_id)
 
-    async def delete_notification(self, notification_id):
+    async def delete_notification(self, notification_id) -> None:
         delete_query = '''
             DELETE FROM notifications
             WHERE id = $1;
@@ -119,7 +112,7 @@ class NotificationDBHandler:
         async with self.pool.acquire() as connection:
             await connection.execute(delete_query, notification_id)
 
-    async def delete_all_notifications(self):
+    async def delete_all_notifications(self) -> None:
         delete_query = '''
             DELETE FROM notifications;
         '''
@@ -131,9 +124,10 @@ class NotificationDBHandler:
             SELECT * FROM notifications;
         '''
         async with self.pool.acquire() as connection:
-            return await connection.fetch(select_query)
+            notifications = map( lambda x: json_to_notification(x) , connection.fetch(select_query) )
+            return notifications
         
-    async def get_all_notifications_batch(self, batch_size: int = 10):
+    async def get_all_notifications_batch(self, batch_size: int = 10) -> AsyncGenerator[List[Result[Notification, Any]], None]:
         offset = 0
         async with self.pool.acquire() as connection:
             while True:
@@ -141,7 +135,8 @@ class NotificationDBHandler:
                 batch = await connection.fetch(query, batch_size, offset)
                 if not batch:
                     break
-                yield batch
+                notifications = [ json_to_notification(x) for x in batch]
+                yield notifications
                 offset += batch_size
 
 async def main():
@@ -170,7 +165,7 @@ async def main():
             schedule_expression=f"*/{random_number_from_1_to_10} * * * *",
             user_id=user_id
         )
-        notification_id = await db_handler.insert_notification(notification)
+        notification_id = await db_handler.add(notification)
         print(notification_id.unwrap())
     notifications = await db_handler.get_all_notifications()
     print(notifications)
