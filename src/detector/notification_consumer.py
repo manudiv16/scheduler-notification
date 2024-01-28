@@ -1,17 +1,16 @@
 import json
 import asyncio
+from typing import Coroutine, Any
 import aio_pika
-
+from uuid import UUID
 from aio_pika.pool import Pool
-from aio_pika import Channel
-from typing import Any
-from returns.io import IOResultE
-from notification_db import NotificationDBHandler
 from returns.future import Future
+from returns.result import Failure, Success, Result
+from notification_db import NotificationDBHandler
 from notification import Notification, json_to_notification
-from aio_pika.connection import AbstractConnection
-from returns.result import Failure, Success
-
+from aio_pika.abc import AbstractRobustConnection
+from aio_pika.abc import AbstractChannel
+from returns.future import FutureResultE
 RABBIT_URI = "amqp://guest:guest@localhost/"
 
 
@@ -21,19 +20,19 @@ class NotificationConsumer:
         self.rabbitmq_request_queue = rabbitmq_request_queue
         self.amqp_url = amqp_url
         self.loop = asyncio.get_event_loop()
-        self.connection_pool: Pool = Pool(self.get_connection, max_size=2, loop=self.loop)
-        self.channel_pool: Pool = Pool(self.get_channel, max_size=10, loop=self.loop)
+        self.connection_pool: Pool[AbstractRobustConnection] = Pool(self.get_connection, max_size=2, loop=self.loop)
+        self.channel_pool: Pool[AbstractChannel] = Pool(self.get_channel, max_size=10, loop=self.loop)
 
 
-    async def get_connection(self) -> AbstractConnection:
+    async def get_connection(self) -> AbstractRobustConnection:
         return await aio_pika.connect_robust(self.amqp_url)
 
-    async def get_channel(self) -> Channel:
+    async def get_channel(self) -> AbstractChannel:
         async with self.connection_pool.acquire() as connection:
             return await connection.channel()
         
     async def consume(self, connection: NotificationDBHandler) -> None:
-        def send(notification: Notification):
+        def send(notification: Notification) -> Coroutine[Any, Any, Result[UUID, Any]]:
             return connection.add(notification)
         await connection.create_pool()
         async with self.channel_pool.acquire() as channel: 
@@ -62,6 +61,7 @@ class NotificationConsumer:
                                 print(err)
                             case Success(noti):
                                 print("ok")
+                                print(noti)
                         await message.ack()
 
                 await asyncio.sleep(0.1)
@@ -71,12 +71,12 @@ class NotificationConsumer:
 if __name__ == "__main__":
     try:
         loop = asyncio.get_event_loop()
-        db = NotificationDBHandler(
+        db: NotificationDBHandler = NotificationDBHandler(
                 dbname='postgres',
                 user='postgres',
                 password='postgres',
                 host='localhost',
-                port='5432'
+                port=5432
             )
         apps = NotificationConsumer("notification-request-exchange", "notification-request-queue")
         tasks = [apps.consume(connection=db),]

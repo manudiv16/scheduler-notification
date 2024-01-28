@@ -12,3 +12,5 @@ marshmallow_dataclass
 icecream
 returns
 asyncpg-stubs
+types-croniter
+mypy

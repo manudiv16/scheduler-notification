@@ -7,7 +7,11 @@ from typing import Any
 from aio_pika import Queue
 from aio_pika.pool import Pool
 from notification import Notification
-from aio_pika.exchange import Exchange
+from aio_pika.abc import AbstractExchange
+from aio_pika.abc import AbstractQueue
+from aio_pika.abc import AbstractRobustConnection
+from aio_pika.abc import AbstractChannel
+
 
 RABBIT_URI = "amqp://guest:guest@localhost/"
 DEAD_LETTER_EXCHANGE = "dead-letter-exchange"
@@ -29,27 +33,27 @@ class NotificationSender:
         self.amqp_url = amqp_url
         self.dead_letter_exchange = dead_letter_exchange
         self.loop = asyncio.get_event_loop()
-        self.connection_pool: Pool = Pool(self.get_connection, max_size=2, loop=self.loop)
-        self.channel_pool: Pool = Pool(self.get_channel, max_size=10, loop=self.loop)
+        self.connection_pool: Pool[AbstractRobustConnection] = Pool(self.get_connection, max_size=2, loop=self.loop)
+        self.channel_pool: Pool[aio_pika.Channel] = Pool(self.get_channel, max_size=10, loop=self.loop)
 
-    async def get_connection(self):
+    async def get_connection(self) -> AbstractRobustConnection:
         return await aio_pika.connect_robust(self.amqp_url)
     
-    async def get_channel(self) -> aio_pika.Channel:
+    async def get_channel(self) -> AbstractChannel:
         async with self.connection_pool.acquire() as connection:
-            return await connection.channel()
+            return await connection.channel() 
         
     async def publish(self, notification: Notification) -> None:
         async with self.channel_pool.acquire() as channel:  
             routing_key = notification.notification_sender
 
-            exchange: Exchange = await channel.declare_exchange(self.exchange, durable=True)
-            dle: Exchange = await channel.declare_exchange(self.dead_letter_exchange, durable=True)
+            exchange: AbstractExchange = await channel.declare_exchange(self.exchange, durable=True)
+            dle: AbstractExchange = await channel.declare_exchange(self.dead_letter_exchange, durable=True)
 
-            ready_queue: Queue = await channel.declare_queue(
+            ready_queue: AbstractQueue = await channel.declare_queue(
                 routing_key, durable=True
             )
-            dead_letter_queue: Queue = await channel.declare_queue(
+            dead_letter_queue: AbstractQueue = await channel.declare_queue(
                 self.dead_letter_exchange, durable=True
             )
 

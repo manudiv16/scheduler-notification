@@ -12,6 +12,7 @@ from notification_db import NotificationDBHandler
 from notification_sender import NotificationSender
 from returns.result import Failure, Success, Result
 from notification import Notification, NotificationStatus, get_status
+from typing import Coroutine
 
 
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -32,23 +33,23 @@ class Notification_detector:
         async for batch in connection.get_all_notifications_batch():
             await asyncio.gather(*(run(x, connection, sender, self.clustering) for x in batch))
             
-async def run(notification: Result[Notification, Any], connectiondb: NotificationDBHandler, sender: NotificationSender, clustering: bool) :
+async def run(notification: Result[Notification, Any], connectiondb: NotificationDBHandler, sender: NotificationSender, clustering: bool) -> None:
     now = datetime.now().replace(second=0, microsecond=0)
     handler_partial = lambda x,y,z: handler(connectiondb, sender, x, y, z)
     await Future.do(
-        await run_helper(clustering, handler_partial, notification)
+        await run_helper(clustering, handler_partial, notification) #type: ignore 
         for notification in notification
     )
 
-async def run_helper(clustering: bool, handler: Callable[[Result[NotificationStatus, Any], Notification, datetime], Coroutine], notification: Notification):
-            if clustering:
-                await run_in_cluster(handler, notification)
-            else:
-                now = datetime.now().replace(second=0, microsecond=0)
-                status = get_status(notification, now)
-                await handler(status, notification, now)
+async def run_helper(clustering: bool, handler: Callable[[Result[NotificationStatus, Any], Notification, datetime], Coroutine[Any, Any, None]], notification: Notification) -> None:
+    if clustering:
+        await run_in_cluster(handler, notification)
+    else:
+        now = datetime.now().replace(second=0, microsecond=0)
+        status = get_status(notification, now)
+        await handler(status, notification, now)
 
-async def run_in_cluster(handler: Callable[[Result[NotificationStatus, Any], Notification, datetime], Coroutine], notification: Notification):
+async def run_in_cluster(handler: Callable[[Result[NotificationStatus, Any], Notification, datetime], Coroutine[Any, Any, None]], notification: Notification) -> None:
     now = datetime.now().replace(second=0, microsecond=0)
     status = get_status(notification, now)
     redis_client = redis.Redis(host='localhost', port=6379, db=0)
@@ -59,7 +60,7 @@ async def run_in_cluster(handler: Callable[[Result[NotificationStatus, Any], Not
     else:
         logger.debug(f"the notify {notification.id} is being processed by another worker")
 
-async def handler(connectiondb: NotificationDBHandler, sender: NotificationSender, status: Result[NotificationStatus, Any], notification: Notification, now: datetime):
+async def handler(connectiondb: NotificationDBHandler, sender: NotificationSender, status: Result[NotificationStatus, Any], notification: Notification, now: datetime) -> None:
     match status:
         case Success(NotificationStatus.EXPIRED):
             logger.debug(f"the notify {notification.id} has expired")
@@ -87,7 +88,7 @@ if __name__ == "__main__":
         user='postgres',
         password='postgres',
         host='localhost',
-        port='5432'
+        port=5432
     )
 
     rabbit = NotificationSender(
