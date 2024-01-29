@@ -24,7 +24,7 @@ class NotificationConsumer:
     rabbitmq_request_queue: str
     amqp_url: str = RABBIT_URI
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         self.loop = asyncio.get_event_loop()
         self.connection_pool: Pool[AbstractRobustConnection] = Pool(self.get_connection, max_size=2, loop=self.loop)
         self.channel_pool: Pool[AbstractChannel] = Pool(self.get_channel, max_size=10, loop=self.loop)
@@ -40,7 +40,7 @@ class NotificationConsumer:
         
     async def consume(self, connection: Repository) -> None:
         def send(notification: Notification) -> Coroutine[Any, Any, Result[UUID, Any]]:
-            return connection.add(notification)
+            return connection.add(object=notification)
         async with self.channel_pool.acquire() as channel: 
             while True:
                 await channel.set_qos(10)
@@ -52,7 +52,6 @@ class NotificationConsumer:
                 )
                 exchange = await channel.get_exchange(self.rabbitmq_request_exchange)
                 await queue.bind(exchange, self.rabbitmq_request_queue)
-                from returns.io import IOFailure, IOSuccess
 
                 async with queue.iterator() as queue_iter:
                     async for message in queue_iter:

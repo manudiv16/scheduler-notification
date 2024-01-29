@@ -37,34 +37,29 @@ class Notification:
             raise ValidationError("Only one of 'schedule_expression' or 'date' can be provided.", field_names=['schedule_expression', 'date'])
         if schedule_expression is None and date is None:
             raise ValidationError("Either 'schedule_expression' or 'date' must be provided.", field_names=['schedule_expression', 'date'])
-            
 
-def match(notification: Notification, now: datetime) -> bool:
-    schedule_expression = notification.schedule_expression
+def match(schedule_expression: Optional[str], date: Optional[datetime], now:datetime) -> bool:
     if schedule_expression:
         return croniter.match(schedule_expression, now)
-    if notification.date:
-        date: datetime = notification.date
+    if date:
         return date == now
     return False
-
-def expired(notification: Notification, now: datetime) -> bool:
-    expiration_date: Optional[datetime] = notification.expiration_date
-    date: Optional[datetime]  = notification.date
-
+    
+def expired(expiration_date: Optional[datetime], date: Optional[datetime], now: datetime) -> bool:
     if expiration_date:
         return expiration_date < now
     elif date:
         return date < now
     else:
         return False
-
-def if_sent(notification: Notification, now: datetime) -> bool:
-    if notification.next_time:
-        timestamp: int = notification.next_time
-        next_time: datetime = datetime.fromtimestamp(timestamp)
-        return next_time > now 
+    
+def if_sent(next_time:  Optional[int], now: datetime) -> bool:
+    if next_time:
+        timestamp: int = next_time
+        next : datetime = datetime.fromtimestamp(timestamp)
+        return next > now 
     return False
+
 
 def get_next_time(expression: str, now: datetime) -> datetime:
     cron = croniter(expression, now)
@@ -72,10 +67,10 @@ def get_next_time(expression: str, now: datetime) -> datetime:
 
 def get_status(notification: Notification, now: datetime) -> Result[NotificationStatus, Any]:
     try:
-        if expired(notification, now):
+        if expired(notification.expiration_date, notification.date, now):
             return Success(NotificationStatus.EXPIRED)
-        elif match(notification, now):
-            if if_sent(notification, now):
+        elif match(notification.schedule_expression,notification.date, now):
+            if if_sent(notification.next_time, now):
                 return Success(NotificationStatus.SENDED)
             else:
                 return Success(NotificationStatus.SEND)

@@ -4,9 +4,9 @@ from repository import Repository
 from contextlib import asynccontextmanager
 from returns.result import Result, Success, Failure
 from notification import Notification, json_to_notification
-from typing import Any, AsyncGenerator, AsyncIterator, List, Optional
+from typing import Any, AsyncIterator, List, Optional
 
-class NotificationDBHandler(Repository[Notification]):
+class NotificationDBHandler(Repository[Notification]): # type: ignore
     def __init__(self, dbname: str, user: str, password: str, host: str, port: int) -> None:
         self.dbname = dbname
         self.user = user
@@ -23,7 +23,7 @@ class NotificationDBHandler(Repository[Notification]):
 
 
     @asynccontextmanager
-    async def connect(self) -> AsyncIterator[asyncpg.Connection]:  # type: ignore
+    async def connect(self) -> AsyncIterator[asyncpg.Connection]:  
         if self.pool:
             async with self.pool.acquire() as connection:
                 yield connection # type: ignore
@@ -61,7 +61,7 @@ class NotificationDBHandler(Repository[Notification]):
         async with self.connect() as connection: 
             await connection.execute(create_table_query)
 
-    async def add(self, notification: Notification) -> Result[UUID, Any]:
+    async def add(self, object: Notification) -> Result[UUID, Any]:
         insert_query = '''
             INSERT INTO notifications (
                 id, message_body, message_title, notification_sender, schedule_expression, user_id,
@@ -72,10 +72,10 @@ class NotificationDBHandler(Repository[Notification]):
         try:
             async with self.connect() as connection:
                 await connection.execute(insert_query, 
-                    notification.id, notification.message_body, notification.message_title, notification.notification_sender,
-                    notification.schedule_expression, notification.user_id, notification.next_time, notification.date, notification.expiration_date
+                    object.id, object.message_body, object.message_title, object.notification_sender,
+                    object.schedule_expression, object.user_id, object.next_time, object.date, object.expiration_date
                 )
-                return Success(notification.id)
+                return Success(object.id)
         except asyncpg.UniqueViolationError as e:
             return Failure(e)
 
@@ -88,13 +88,13 @@ class NotificationDBHandler(Repository[Notification]):
             async with self.connect() as connection:
                 row = await connection.fetchrow(select_query, id)
                 if row is None:
-                    return Success()
+                    return Failure("Notification not found")
                 else:
-                    return Success(json_to_notification(row))
+                    return json_to_notification(row)
         except Exception as e:
             return Failure(e)
     
-    async def get_all(self, batch_size: int = 10) -> AsyncGenerator[List[Result[Notification, Any]], None]:
+    async def get_all(self, batch_size: int = 10) -> AsyncIterator[List[Result[Notification, Any]]]: 
         offset = 0
         async with self.connect() as connection:
             while True:
@@ -106,7 +106,7 @@ class NotificationDBHandler(Repository[Notification]):
                 yield notifications
                 offset += batch_size
 
-    async def update(self, id: UUID, **kwargs) -> None:
+    async def update(self, id: UUID, **kwargs: object) -> None:
         update_query = "UPDATE notifications SET "
         update_query += ", ".join(f"{key} = ${i+2}" for i, key in enumerate(kwargs))
         update_query += " WHERE id = $1"
@@ -114,13 +114,13 @@ class NotificationDBHandler(Repository[Notification]):
         async with self.connect() as connection:
             await connection.execute(update_query, id, *kwargs.values())
 
-    async def delete(self, notification_id: UUID) -> None:
+    async def delete(self, id: UUID) -> None:
         delete_query = '''
             DELETE FROM notifications
             WHERE id = $1;
         '''
         async with self.connect() as connection:
-            await connection.execute(delete_query, notification_id)
+            await connection.execute(delete_query, id)
 
     async def delete_all(self) -> None:
         delete_query = '''

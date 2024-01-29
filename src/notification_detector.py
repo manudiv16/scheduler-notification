@@ -9,7 +9,7 @@ from repository import Repository
 from returns.future import Future
 from typing import Any, Callable, Coroutine
 from notification_sender import NotificationSender
-from returns.result import Failure, Success, Result
+from returns.result import Failure, Success, Result, safe
 from notification import Notification, NotificationStatus, get_status, get_next_time
 
 
@@ -34,18 +34,24 @@ class Notification_detector:
     async def runner(cls,notification: Result[Notification, Any], connectiondb: Repository, sender: NotificationSender, clustering: bool) -> None:
         handler_partial = lambda x,y,z: cls.handler(connectiondb, sender, x, y, z)
         await Future.do(
-            await cls.run_helper(clustering, handler_partial, notifi) #type: ignore 
+            await cls.run_helper(clustering, handler_partial, notifi) 
             for notifi in notification
         )
 
     @classmethod
-    async def run_helper(cls, clustering: bool, handler: Callable[[Result[NotificationStatus, Any], Notification, datetime], Coroutine[Any, Any, None]], notification: Notification) -> None:
-        if clustering:
-            await cls.run_in_cluster(handler, notification)
-        else:
-            now = datetime.now().replace(second=0, microsecond=0)
-            status = get_status(notification, now)
-            await handler(status, notification, now)
+    async def run_helper(cls, clustering: bool, handler: Callable[[Result[NotificationStatus, Any], Notification, datetime], Coroutine[Any, Any, None]], notification: Notification) -> Result[None, Any]:
+        try:
+            if clustering:
+                await cls.run_in_cluster(handler, notification)
+                return Success(None)
+            else:
+                now = datetime.now().replace(second=0, microsecond=0)
+                status = get_status(notification, now)
+                await handler(status, notification, now)
+                return Success(None)
+        except Exception as e:
+            return Failure(e)
+
 
     @classmethod
     async def run_in_cluster(cls, handler: Callable[[Result[NotificationStatus, Any], Notification, datetime], Coroutine[Any, Any, None]], notification: Notification) -> None:
@@ -64,7 +70,7 @@ class Notification_detector:
         match status:
             case Success(NotificationStatus.EXPIRED):
                 logger.debug(f"the notify {notification.id} has expired")
-                await connectiondb.delete(notification_id=notification.id)
+                await connectiondb.delete(id=notification.id)
             case Success(NotificationStatus.WAITING):
                 logger.debug(f"the notify {notification.id} not match")
             case Success(NotificationStatus.SENDED):

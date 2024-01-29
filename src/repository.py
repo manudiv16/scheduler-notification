@@ -1,16 +1,12 @@
 from uuid import UUID
 from returns.result import Result
-from typing import Any, AsyncGenerator, List
+from typing import Any, AsyncIterator,Iterator, List
 from abc import ABC, abstractmethod
 
-class Repository[T](ABC): 
-
-    @abstractmethod
-    async def create(self) -> 'Repository[T]':
-        raise NotImplementedError
+class Repository[T](ABC): # type: ignore
     
     @abstractmethod
-    async def add(self, **kwargs: T) -> Result[UUID, Any]:
+    async def add(self, object: T) -> Result[UUID, Any]:
         raise NotImplementedError
 
     @abstractmethod
@@ -18,7 +14,7 @@ class Repository[T](ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def get_all(self) -> AsyncGenerator[List[Result[T, Any]], None]:
+    def get_all(self) -> AsyncIterator[List[Result[T, Any]]]:
         raise NotImplementedError
 
 
