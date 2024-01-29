@@ -18,3 +18,5 @@ def loopwait(seconds: int) -> Callable[..., Any]:
                 await sleep(seconds)
         return wrapper_repeat
     return decorator_repeat
+
+__all__ = ['loopwait']

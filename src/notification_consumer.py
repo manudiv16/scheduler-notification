@@ -1,27 +1,34 @@
 import json
 import asyncio
-from typing import Coroutine, Any
+import logging
 import aio_pika
 from uuid import UUID
 from aio_pika.pool import Pool
+from dataclasses import dataclass
+from typing import Coroutine, Any
+from repository import Repository
 from returns.future import Future
 from returns.result import Failure, Success, Result
-from notification_db import NotificationDBHandler
 from notification import Notification, json_to_notification
-from aio_pika.abc import AbstractRobustConnection
-from aio_pika.abc import AbstractChannel
-from returns.future import FutureResultE
+from aio_pika.abc import AbstractRobustConnection, AbstractChannel
+
 RABBIT_URI = "amqp://guest:guest@localhost/"
 
+logging.basicConfig(level=logging.ERROR, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger("notification_consumer")
+logging.getLogger("websockets.client").setLevel(logging.WARNING)
 
+@dataclass
 class NotificationConsumer:
-    def __init__(self, rabbitmq_request_exchange:str, rabbitmq_request_queue: str, amqp_url: str = RABBIT_URI):
-        self.rabbitmq_request_exchange = rabbitmq_request_exchange
-        self.rabbitmq_request_queue = rabbitmq_request_queue
-        self.amqp_url = amqp_url
+    rabbitmq_request_exchange: str
+    rabbitmq_request_queue: str
+    amqp_url: str = RABBIT_URI
+
+    def __post_init__(self):
         self.loop = asyncio.get_event_loop()
         self.connection_pool: Pool[AbstractRobustConnection] = Pool(self.get_connection, max_size=2, loop=self.loop)
         self.channel_pool: Pool[AbstractChannel] = Pool(self.get_channel, max_size=10, loop=self.loop)
+        logger.info("Notification consumer is running")
 
 
     async def get_connection(self) -> AbstractRobustConnection:
@@ -31,10 +38,9 @@ class NotificationConsumer:
         async with self.connection_pool.acquire() as connection:
             return await connection.channel()
         
-    async def consume(self, connection: NotificationDBHandler) -> None:
+    async def consume(self, connection: Repository) -> None:
         def send(notification: Notification) -> Coroutine[Any, Any, Result[UUID, Any]]:
             return connection.add(notification)
-        await connection.create_pool()
         async with self.channel_pool.acquire() as channel: 
             while True:
                 await channel.set_qos(10)
@@ -46,32 +52,37 @@ class NotificationConsumer:
                 )
                 exchange = await channel.get_exchange(self.rabbitmq_request_exchange)
                 await queue.bind(exchange, self.rabbitmq_request_queue)
+                from returns.io import IOFailure, IOSuccess
+
                 async with queue.iterator() as queue_iter:
                     async for message in queue_iter:
                         msg = message.body
                         msg = json.loads(msg)
                         notifi = json_to_notification(msg)
-                        hola = Future.do(
+                        hola =  await Future.do(
                             await send(notifi)
                             for notifi in notifi
                         )
-                        await hola
-                        match notifi:
-                            case Failure(err):
-                                print(err)
-                            case Success(noti):
-                                print("ok")
-                                print(noti)
+                        hola.map(self.print_result)
                         await message.ack()
 
                 await asyncio.sleep(0.1)
+    @staticmethod
+    def print_result(result: Result[UUID, Any]) -> None:
+        match result:
+            case Failure(err):
+                logger.info(f"Error adding notification to database: {err}")
+            case Success(noti):
+                logger.info(f"Notification {noti} added to database")
 
 
+__all__ = ["NotificationConsumer"]
 
 if __name__ == "__main__":
+    from notification_db import NotificationDBHandler
     try:
         loop = asyncio.get_event_loop()
-        db: NotificationDBHandler = NotificationDBHandler(
+        db: Repository = NotificationDBHandler(
                 dbname='postgres',
                 user='postgres',
                 password='postgres',

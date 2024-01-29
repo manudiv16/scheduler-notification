@@ -5,7 +5,7 @@ from notification_consumer import NotificationConsumer
 from notification_detector import Notification_detector
 
 async def main() -> None:
-        db = NotificationDBHandler(
+        db = await NotificationDBHandler.create(
                 dbname='postgres',
                 user='postgres',
                 password='postgres',

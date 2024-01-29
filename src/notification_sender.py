@@ -81,3 +81,5 @@ class NotificationSender:
                     ),
                     routing_key
                 )
+
+__all__ = ["NotificationSender"]
