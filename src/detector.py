@@ -1,3 +1,4 @@
+import os
 import redis
 import asyncio
 import logging
@@ -6,16 +7,21 @@ from utils import loopwait
 from datetime import datetime
 from dataclasses import dataclass
 from repository import Repository
-from returns.future import Future
+from sender import NotificationSender
 from typing import Any, Callable, Coroutine
-from notification_sender import NotificationSender
-from returns.result import Failure, Success, Result, safe
+from returns.result import Failure, Success, Result
+from opentelemetry.metrics import get_meter_provider
 from notification import Notification, NotificationStatus, get_status, get_next_time
 
 
-logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+meter = get_meter_provider().get_meter("view-name-change", "0.1.2")
+send_counter = meter.create_counter("send_notification_evaluation_counter")
+failed_notification_counter = meter.create_counter("failed_notification_evaluation_counter")
+total_notification_counter = meter.create_counter("total_notification_evaluation_counter")
 logger = logging.getLogger("notification_detector")
-logging.getLogger("websockets.client").setLevel(logging.WARNING)
+hostname = os.environ.get("HOSTNAME", "localhost")
+tag = {"instance": hostname}
+logger.setLevel(logging.DEBUG)
 
 @dataclass(frozen=True)
 class Notification_detector:
@@ -33,10 +39,13 @@ class Notification_detector:
     @classmethod       
     async def runner(cls,notification: Result[Notification, Any], connectiondb: Repository, sender: NotificationSender, clustering: bool) -> None:
         handler_partial = lambda x,y,z: cls.handler(connectiondb, sender, x, y, z)
-        await Future.do(
-            await cls.run_helper(clustering, handler_partial, notifi) 
-            for notifi in notification
-        )
+        match notification:
+            case Success(notify):
+                await cls.run_helper(clustering, handler_partial, notify)
+            case Failure(error):
+                failed_notification_counter.add(1, tag)
+                logger.error(f"error: {error}")
+                logger.info(f"the notify has error")
 
     @classmethod
     async def run_helper(cls, clustering: bool, handler: Callable[[Result[NotificationStatus, Any], Notification, datetime], Coroutine[Any, Any, None]], notification: Notification) -> Result[None, Any]:
@@ -67,6 +76,7 @@ class Notification_detector:
     
     @classmethod
     async def handler(cls, connectiondb: Repository, sender: NotificationSender, status: Result[NotificationStatus, Any], notification: Notification, now: datetime) -> None:
+        total_notification_counter.add(1, tag)
         match status:
             case Success(NotificationStatus.EXPIRED):
                 logger.debug(f"the notify {notification.id} has expired")
@@ -76,6 +86,7 @@ class Notification_detector:
             case Success(NotificationStatus.SENDED):
                 logger.debug(f"the notify {notification.id} has already been sent")
             case Success(NotificationStatus.SEND):
+                send_counter.add(1, tag)
                 if notification.schedule_expression:
                     next_time = get_next_time(notification.schedule_expression, now)
                     next_time_int: int = int(round(next_time.timestamp())) 
@@ -83,12 +94,13 @@ class Notification_detector:
                 logger.debug(f"the notify {notification.id} will be sent")
                 await sender.publish(notification)
             case Failure(error):
+                failed_notification_counter.add(1, tag)
                 logger.error(f"error: {error}")
                 logger.info(f"the notify {notification.id} has error")
 
 __all__ = ["Notification_detector"]
 async def main() -> None:
-        from notification_db import NotificationDBHandler
+        from notificatiton_repository import NotificationDBHandler
         db = await NotificationDBHandler.create(
                 dbname='postgres',
                 user='postgres',

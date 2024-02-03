@@ -1,2 +1,3 @@
 [tool.mypy]
 strict = true
+namespace_packages = true

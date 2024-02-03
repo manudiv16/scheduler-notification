@@ -1,22 +1,31 @@
+import os
 import json
 import asyncio
 import logging
 import aio_pika
+
 from uuid import UUID
+from typing import Any, Dict
 from aio_pika.pool import Pool
 from dataclasses import dataclass
-from typing import Coroutine, Any
 from repository import Repository
-from returns.future import Future
+from returns.future import FutureResult
+from returns.io import IOSuccess, IOFailure
 from returns.result import Failure, Success, Result
+from opentelemetry.metrics import get_meter_provider
 from notification import Notification, json_to_notification
 from aio_pika.abc import AbstractRobustConnection, AbstractChannel
 
-RABBIT_URI = "amqp://guest:guest@localhost/"
-
-logging.basicConfig(level=logging.ERROR, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+meter = get_meter_provider().get_meter("view-name-change", "0.1.2")
+register_counter = meter.create_counter("registered_notification_counter")
+failed_register_counter = meter.create_counter("failed_registered_notification_counter")
+hostname = os.environ.get("HOSTNAME", "localhost")
+tag = {"hostname": hostname }
 logger = logging.getLogger("notification_consumer")
-logging.getLogger("websockets.client").setLevel(logging.WARNING)
+logger.setLevel(logging.DEBUG)
+
+
+RABBIT_URI = "amqp://guest:guest@localhost/"
 
 @dataclass
 class NotificationConsumer:
@@ -38,9 +47,26 @@ class NotificationConsumer:
         async with self.connection_pool.acquire() as connection:
             return await connection.channel()
         
+    def message_to_notification(self, message: aio_pika.abc.AbstractIncomingMessage) -> Result[Notification, Any]:
+        try:
+            msg = message.body
+            message_dict: Dict[str, Any] = json.loads(msg)
+            notifi = json_to_notification(message_dict)
+            match notifi:
+                case Success(noti):
+                    return Success(noti)
+                case Failure(err):
+                    return Failure(err)
+        except Exception as e:
+            return Failure(e)
+        return Failure("Failed to parse notification")
+        
     async def consume(self, connection: Repository) -> None:
-        def send(notification: Notification) -> Coroutine[Any, Any, Result[UUID, Any]]:
+        
+        async def send(notification: Notification) -> FutureResult[UUID, Any] :
             return connection.add(object=notification)
+    
+        
         async with self.channel_pool.acquire() as channel: 
             while True:
                 await channel.set_qos(10)
@@ -55,30 +81,32 @@ class NotificationConsumer:
 
                 async with queue.iterator() as queue_iter:
                     async for message in queue_iter:
-                        msg = message.body
-                        msg = json.loads(msg)
-                        notifi = json_to_notification(msg)
-                        hola =  await Future.do(
-                            await send(notifi)
-                            for notifi in notifi
-                        )
-                        hola.map(self.print_result)
+
+                        posible_notification: Result[Notification, Any] = self.message_to_notification(message)
+                        a = FutureResult.from_result(posible_notification).bind_async(send)
+                        match await a:
+                            case IOSuccess(Success(notification_id)):
+                                register_counter.add(1,tag)
+                                logger.info(f"Notification {notification_id} added to database")
+                            case IOSuccess(Failure(err)):
+                                failed_register_counter.add(1,tag)
+                                logger.warning(f"Error adding notification to database: {err}")
+                                continue
+                            case IOFailure(err):
+                                failed_register_counter.add(1,tag)
+                                logger.warning(f"Error adding notification to database: {err}")
+                                continue
+                        #TODO: send to dead letter queue
                         await message.ack()
 
                 await asyncio.sleep(0.1)
-    @staticmethod
-    def print_result(result: Result[UUID, Any]) -> None:
-        match result:
-            case Failure(err):
-                logger.info(f"Error adding notification to database: {err}")
-            case Success(noti):
-                logger.info(f"Notification {noti} added to database")
+            
 
 
 __all__ = ["NotificationConsumer"]
 
 if __name__ == "__main__":
-    from notification_db import NotificationDBHandler
+    from notificatiton_repository import NotificationDBHandler
     try:
         loop = asyncio.get_event_loop()
         db: Repository = NotificationDBHandler(

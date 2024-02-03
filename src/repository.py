@@ -1,16 +1,17 @@
 from uuid import UUID
 from returns.result import Result
+from returns.future import FutureResult, Future
 from typing import Any, AsyncIterator,Iterator, List
 from abc import ABC, abstractmethod
 
 class Repository[T](ABC): # type: ignore
     
     @abstractmethod
-    async def add(self, object: T) -> Result[UUID, Any]:
+    def add(self, object: T) -> FutureResult[UUID, Any]:
         raise NotImplementedError
 
     @abstractmethod
-    async def get(self, id: UUID) -> Result[T, Any]:
+    def get(self, id: UUID) -> FutureResult[T, Any]:
         raise NotImplementedError
 
     @abstractmethod

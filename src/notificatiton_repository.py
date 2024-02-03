@@ -1,10 +1,13 @@
 import asyncpg
+
 from uuid import UUID
 from repository import Repository
 from contextlib import asynccontextmanager
 from returns.result import Result, Success, Failure
-from notification import Notification, json_to_notification
 from typing import Any, AsyncIterator, List, Optional
+from notification import Notification, json_to_notification
+from returns.future import FutureResult, future_safe, future
+
 
 class NotificationDBHandler(Repository[Notification]): # type: ignore
     def __init__(self, dbname: str, user: str, password: str, host: str, port: int) -> None:
@@ -61,7 +64,8 @@ class NotificationDBHandler(Repository[Notification]): # type: ignore
         async with self.connect() as connection: 
             await connection.execute(create_table_query)
 
-    async def add(self, object: Notification) -> Result[UUID, Any]:
+    @future_safe
+    async def add(self, object: Notification) -> UUID:
         insert_query = '''
             INSERT INTO notifications (
                 id, message_body, message_title, notification_sender, schedule_expression, user_id,
@@ -69,17 +73,20 @@ class NotificationDBHandler(Repository[Notification]): # type: ignore
             )
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9);
         '''
-        try:
-            async with self.connect() as connection:
-                await connection.execute(insert_query, 
-                    object.id, object.message_body, object.message_title, object.notification_sender,
-                    object.schedule_expression, object.user_id, object.next_time, object.date, object.expiration_date
-                )
-                return Success(object.id)
-        except asyncpg.UniqueViolationError as e:
-            return Failure(e)
+        
+        async with self.connect() as connection:
+            await connection.execute(insert_query, 
+                object.id, object.message_body, object.message_title, object.notification_sender,
+                object.schedule_expression, object.user_id, object.next_time, object.date, object.expiration_date
+            )
+            return object.id
+        
+    def get(self, id: UUID) -> FutureResult[Notification, Any]:
+        return FutureResult.from_typecast(self._get(id))
+    
 
-    async def get(self, id: UUID) -> Result[Notification, Any]:
+    @future
+    async def _get(self, id: UUID) -> Result[Notification, Any]:
         select_query = '''
             SELECT * FROM notifications
             WHERE id = $1;
@@ -130,3 +137,35 @@ class NotificationDBHandler(Repository[Notification]): # type: ignore
             await connection.execute(delete_query)
 
 __all__ = ["NotificationDBHandler"]
+
+async def main() -> None:
+    from datetime import datetime
+    db = await NotificationDBHandler.create(
+                dbname='postgres',
+                user='postgres',
+                password='postgres',
+                host='localhost',
+                port=5432
+            )
+    await db.create_notification_table()
+    await db.delete_all()
+    # for i in range(10):
+    #     await db.add(Notification(
+    #         id=UUID(f"e3e2b2e{i}-1b36-4c0b-9d6c-6d1d7f6e334d"),
+    #         message_body="body",
+    #         message_title="title",
+    #         notification_sender="sender",
+    #         schedule_expression="* * * * *",
+    #         user_id=UUID(f"e3e2b{i}e4-1b36-4c0b-9d6c-6d1d7f6e334d"),
+    #         next_time=0,
+    #         date = datetime.strptime("2021-10-10 10:10:10", "%Y-%m-%d %H:%M:%S"),
+    #         expiration_date= datetime.strptime("2021-10-10 10:10:10", "%Y-%m-%d %H:%M:%S")
+    #     ))
+    # async for notifications in db.get_all():
+    #     print(notifications)
+    
+
+
+if __name__ == "__main__":
+    import asyncio
+    asyncio.run(main())

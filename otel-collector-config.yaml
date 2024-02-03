@@ -1,0 +1,57 @@
+receivers:
+  otlp:
+    protocols:
+      grpc:
+
+exporters:
+  prometheus:
+    endpoint: "0.0.0.0:8889"
+
+  loki:
+    endpoint: "http://loki:3100/loki/api/v1/push"
+
+  debug:
+    verbosity: detailed
+
+  zipkin:
+    endpoint: "http://zipkin-all-in-one:9411/api/v2/spans"
+    format: proto
+
+  otlp:
+    endpoint: jaeger-all-in-one:4317
+    tls:
+      insecure: true
+
+processors:
+  batch:
+  attributes:
+    actions:
+      - action: insert
+        key: loki.attribute.labels
+        value: container
+      - action: insert
+        key: loki.format
+        value: raw
+
+extensions:
+  health_check:
+  pprof:
+    endpoint: :1888
+  zpages:
+    endpoint: :55679
+
+service:
+  extensions: [pprof, zpages, health_check]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [zipkin, otlp]
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [prometheus]
+    logs:
+      receivers: [ otlp ]
+      processors: [ attributes ]
+      exporters: [ debug, loki ]

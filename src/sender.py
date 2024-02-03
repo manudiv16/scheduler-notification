@@ -1,22 +1,25 @@
+import os 
 import json
 import asyncio
 import logging
 import aio_pika
 
 from typing import Any
-from aio_pika import Queue
 from aio_pika.pool import Pool
 from notification import Notification
-from aio_pika.abc import AbstractExchange
 from aio_pika.abc import AbstractQueue
-from aio_pika.abc import AbstractRobustConnection
 from aio_pika.abc import AbstractChannel
+from aio_pika.abc import AbstractExchange
+from aio_pika.abc import AbstractRobustConnection
+from opentelemetry.metrics import get_meter_provider
 
+meter = get_meter_provider().get_meter("view-name-change", "0.1.2")
+sended_counter = meter.create_counter("send_notification_counter")
+failed_notification_counter = meter.create_counter("failed_notification_counter")
 
 RABBIT_URI = "amqp://guest:guest@localhost/"
 DEAD_LETTER_EXCHANGE = "dead-letter-exchange"
-
-logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+hostname = os.environ.get("HOSTNAME", "localhost")
 logger = logging.getLogger("notification_sender")
 logging.getLogger("aio_pika.connection").setLevel(logging.WARNING)
 logging.getLogger("aio_pika.exchange").setLevel(logging.WARNING)
@@ -25,6 +28,8 @@ logging.getLogger("aio_pika.robust_connection").setLevel(logging.WARNING)
 logging.getLogger("aiormq.connection").setLevel(logging.WARNING)
 logging.getLogger("aio_pika.queue").setLevel(logging.WARNING)
 logging.getLogger("aio_pika.pool").setLevel(logging.WARNING)
+logger.setLevel(logging.DEBUG)
+tag = {"instance": hostname}
 
 class NotificationSender:
 
@@ -72,7 +77,9 @@ class NotificationSender:
                     ),
                     routing_key
                 )
+                sended_counter.add(1, tag)
             except Exception as e:
+                failed_notification_counter.add(1, tag)
                 logger.error(f"error: {e}")
                 await dle.publish(
                     aio_pika.Message(

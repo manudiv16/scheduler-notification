@@ -29,6 +29,15 @@ class Notification:
     expiration_date: Optional[datetime] = datetime.fromisoformat(expiration_date_str) if expiration_date_str else None
 
     @validates_schema
+    def validate_expiration_date_str(self, data: Dict[str, Any], **kwargs: Dict[Any, Any]) -> None:
+        expiration_date_str = data.get('expiration_date_str')
+        if expiration_date_str:
+            try:
+                datetime.fromisoformat(expiration_date_str)
+            except ValueError as err:
+                raise ValidationError("Invalid expiration_date_str format.", field_names=['expiration_date_str'])
+
+    @validates_schema
     def validate_schedule_or_date(self, data: Dict[str, Any] , **kwargs: Dict[Any, Any]) -> None:
         schedule_expression = data.get('schedule_expression')
         date = data.get('date')
@@ -82,8 +91,10 @@ def get_status(notification: Notification, now: datetime) -> Result[Notification
 def json_to_notification(json: Any) -> Result[Notification, Any] : 
     try:
         notification_schema = marshmallow_dataclass.class_schema(Notification)()
-        return Success(notification_schema.load(dict(json)))
-    except ValidationError as err:
+        notification = notification_schema.load(dict(json))
+        return Success(notification)
+    except Exception as err:
         return Failure(err)
+
 
 __all__ = [ "Notification", "NotificationStatus", "get_status", "json_to_notification" ]
