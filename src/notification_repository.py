@@ -147,22 +147,25 @@ async def main() -> None:
                 host='localhost',
                 port=5432
             )
-    await db.create_notification_table()
-    await db.delete_all()
-    # for i in range(10):
-    #     await db.add(Notification(
-    #         id=UUID(f"e3e2b2e{i}-1b36-4c0b-9d6c-6d1d7f6e334d"),
-    #         message_body="body",
-    #         message_title="title",
-    #         notification_sender="sender",
-    #         schedule_expression="* * * * *",
-    #         user_id=UUID(f"e3e2b{i}e4-1b36-4c0b-9d6c-6d1d7f6e334d"),
-    #         next_time=0,
-    #         date = datetime.strptime("2021-10-10 10:10:10", "%Y-%m-%d %H:%M:%S"),
-    #         expiration_date= datetime.strptime("2021-10-10 10:10:10", "%Y-%m-%d %H:%M:%S")
-    #     ))
-    # async for notifications in db.get_all():
-    #     print(notifications)
+    # await db.create_notification_table()
+    # await db.delete_all()
+    for i in range(10):
+        await db.add(Notification(
+            id=UUID(f"e3e2b2e{i}-1b36-4c0b-9d6c-6d1d7f6e334d"),
+            message_body="send this message every 2 minutes",
+            message_title="title",
+            notification_sender="sender",
+            schedule_expression="*/2 * * * *",
+            user_id=UUID(f"e3e2b{i}e4-1b36-4c0b-9d6c-6d1d7f6e334d"),
+            # next_time=0,
+            # date = datetime.strptime("2021-10-10 10:10:10", "%Y-%m-%d %H:%M:%S"),
+            # expiration_date= datetime.strptime("2021-10-10 10:10:10", "%Y-%m-%d %H:%M:%S")
+        ))
+    a = []
+    async for notifications in db.get_all():
+        for notification in notifications:
+            a.append(notification)
+    print(len(a))
     
 
 

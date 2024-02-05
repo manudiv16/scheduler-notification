@@ -1,8 +1,9 @@
-from functools import wraps
 from asyncio import sleep
-from datetime import datetime, timedelta
-from typing import Callable
+from functools import wraps
 from typing import Callable, Any
+from dataclasses import dataclass
+from typing import Callable, Optional
+from datetime import datetime, timedelta
 
 def loopwait(seconds: int) -> Callable[..., Any]:
     def decorator_repeat(func: Callable[..., Any]) -> Callable[..., Any]:
@@ -18,5 +19,12 @@ def loopwait(seconds: int) -> Callable[..., Any]:
                 await sleep(seconds)
         return wrapper_repeat
     return decorator_repeat
+
+@dataclass(frozen=True)
+class RedisConfig:
+    host: str
+    port: int
+    db: int = 0
+    password: Optional[str] = None
 
 __all__ = ['loopwait']

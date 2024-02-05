@@ -6,8 +6,7 @@ services:
     ports:
         - 5672:5672
         - 15672:15672
-    networks:
-        - rabbitmq_go_net
+
 
   postgress:
     image: postgres:latest
@@ -18,27 +17,7 @@ services:
         - POSTGRES_DB=postgres
     ports:
         - 5432:5432
-    networks:
-        - rabbitmq_go_net
 
-  jaeger-all-in-one:
-    image: jaegertracing/all-in-one:latest
-    restart: always
-    container_name: 'jaeger'
-    ports:
-      - "16686:16686"
-      - "14268"
-      - "14250"
-
-  # Zipkin
-  zipkin-all-in-one:
-    image: openzipkin/zipkin:latest
-    container_name: 'zipkin'
-    environment:
-      - JAVA_OPTS=-Xms1024m -Xmx1024m -XX:+ExitOnOutOfMemoryError
-    restart: always
-    ports:
-      - "9411:9411"
 
   otel-collector:
     image: otel/opentelemetry-collector-contrib:latest
@@ -54,9 +33,6 @@ services:
       - "13133:13133" # health_check extension
       - "4317:4317"   # OTLP gRPC receiver
       - "55679:55679" # zpages extension
-    depends_on:
-      - jaeger-all-in-one
-      - zipkin-all-in-one
 
   prometheus:
     image: prom/prometheus:latest
@@ -68,6 +44,7 @@ services:
       - "9090:9090"
       - "9000:9000"
 
+
   grafana:
     image: grafana/grafana:latest
     container_name: 'grafana'
@@ -77,12 +54,47 @@ services:
     depends_on:
       - prometheus
 
+
   loki:
     image: grafana/loki:latest
     ports:
       - "3100:3100"
     command: -config.file=/etc/loki/local-config.yaml
 
-networks:
-  rabbitmq_go_net:
-    driver: bridge
+
+  scheduler-notification:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    deploy:
+      mode: replicated
+      replicas: 50
+    # volumes:
+    #   - ./src:/app
+    # command:
+    #   - sleep
+    #   - infinity
+    depends_on:
+      - rabbitmq
+      - postgress
+    environment:
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USER=guest
+      - RABBITMQ_PASSWORD=guest
+      - POSTGRES_HOST=postgress
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=postgres
+      - OPENTELEMETRY_HOST=otel-collector
+      - OPENTELEMETRY_PORT=4317
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+
+  redis:
+    image: redis:latest
+    container_name: 'redis'
+    ports: 
+      - "6379:6379"
+

@@ -7,9 +7,12 @@ from utils import loopwait
 from datetime import datetime
 from dataclasses import dataclass
 from repository import Repository
+from utils import RedisConfig
 from sender import NotificationSender
-from typing import Any, Callable, Coroutine
+from typing import Any, Callable, Coroutine, Optional
 from returns.result import Failure, Success, Result
+from returns.io import IOSuccess, IOFailure
+from returns.future import FutureResult
 from opentelemetry.metrics import get_meter_provider
 from notification import Notification, NotificationStatus, get_status, get_next_time
 
@@ -26,6 +29,11 @@ logger.setLevel(logging.DEBUG)
 @dataclass(frozen=True)
 class Notification_detector:
     clustering: bool = False
+    redis_config: Optional[RedisConfig] = None
+
+    def __post_init__(self) -> None:
+        if self.clustering and not self.redis_config:
+            raise ValueError("redis_config is required")
     
     async def run(self, connection: Repository, sender: NotificationSender) -> None:
         logger.info("Notification detector is running")
@@ -34,24 +42,25 @@ class Notification_detector:
     @loopwait(60)
     async def __app(self, connection: Repository, sender: NotificationSender) -> None:
         async for batch in connection.get_all():
-            await asyncio.gather(*(self.runner(x, connection, sender, self.clustering) for x in batch))
+            await asyncio.gather(*(self.runner(x, connection, sender, self.clustering, self.redis_config) for x in batch))
     
     @classmethod       
-    async def runner(cls,notification: Result[Notification, Any], connectiondb: Repository, sender: NotificationSender, clustering: bool) -> None:
+    async def runner(cls,notification: Result[Notification, Any], connectiondb: Repository, sender: NotificationSender, clustering: bool, redis_config: Optional[RedisConfig]) -> None:
         handler_partial = lambda x,y,z: cls.handler(connectiondb, sender, x, y, z)
+        get_current_status_partial = lambda x: cls.get_current_status(x, connectiondb)
         match notification:
             case Success(notify):
-                await cls.run_helper(clustering, handler_partial, notify)
+                await cls.run_helper(clustering,redis_config ,handler_partial,get_current_status_partial, notify)
             case Failure(error):
                 failed_notification_counter.add(1, tag)
                 logger.error(f"error: {error}")
                 logger.info(f"the notify has error")
 
     @classmethod
-    async def run_helper(cls, clustering: bool, handler: Callable[[Result[NotificationStatus, Any], Notification, datetime], Coroutine[Any, Any, None]], notification: Notification) -> Result[None, Any]:
+    async def run_helper(cls, clustering: bool, redis_config: Optional[RedisConfig] , handler: Callable[[Result[NotificationStatus, Any], Notification, datetime], Coroutine[Any, Any, None]], get_c_status , notification: Notification) -> Result[None, Any]: #type: ignore
         try:
             if clustering:
-                await cls.run_in_cluster(handler, notification)
+                await cls.run_in_cluster(handler, notification, redis_config, get_c_status)
                 return Success(None)
             else:
                 now = datetime.now().replace(second=0, microsecond=0)
@@ -63,12 +72,24 @@ class Notification_detector:
 
 
     @classmethod
-    async def run_in_cluster(cls, handler: Callable[[Result[NotificationStatus, Any], Notification, datetime], Coroutine[Any, Any, None]], notification: Notification) -> None:
+    async def get_current_status(cls, notification: Notification, connectiondb: Repository) -> Result[NotificationStatus, Any]: #type: ignore
+        current_notification: FutureResult[Notification, Any] = connectiondb.get(id=notification.id)
+        match await current_notification:
+            case IOSuccess(Success(notify)):
+                now = datetime.now().replace(second=0, microsecond=0)
+                return get_status(notify, now)
+            case Failure(_):
+                return NotificationStatus.WAITING
+
+    @classmethod
+    async def run_in_cluster(cls, handler: Callable[[Result[NotificationStatus, Any], Notification, datetime], Coroutine[Any, Any, None]], notification: Notification, redis_config: Optional[RedisConfig], get_c_status) -> None: #type: ignore
         now = datetime.now().replace(second=0, microsecond=0)
-        status = get_status(notification, now)
-        redis_client = redis.Redis(host='localhost', port=6379, db=0)
+        if not redis_config:
+            raise ValueError("redis_config is required")
+        redis_client = redis.Redis(host=redis_config.host, port=redis_config.port, db=redis_config.db)
         notification_id_str = str(notification.id)
         if redis_client.set(notification_id_str, 1, ex=10, nx=True):
+            status = await get_c_status(notification)
             await handler(status, notification, now)
             redis_client.delete(notification_id_str)
         else:
@@ -100,7 +121,9 @@ class Notification_detector:
 
 __all__ = ["Notification_detector"]
 async def main() -> None:
-        from notificatiton_repository import NotificationDBHandler
+        logging.basicConfig(level=logging.DEBUG)
+        logging.getLogger().setLevel(logging.DEBUG)
+        from notification_repository import NotificationDBHandler
         db = await NotificationDBHandler.create(
                 dbname='postgres',
                 user='postgres',
@@ -110,9 +133,12 @@ async def main() -> None:
             )
         
         rabbit = NotificationSender(
-            "notification-senders"
+            "notification-senders",
+            "amqp://guest:guest@localhos:5672/"
+
         )
-        detector = Notification_detector(clustering=True).run(db,rabbit)
+        redis = RedisConfig(host="localhost", port=6379, db=0)
+        detector = Notification_detector(clustering=True,redis_config=redis).run(db,rabbit)
         tasks = [detector]   
         await asyncio.gather(*tasks) 
 

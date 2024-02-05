@@ -17,7 +17,7 @@ meter = get_meter_provider().get_meter("view-name-change", "0.1.2")
 sended_counter = meter.create_counter("send_notification_counter")
 failed_notification_counter = meter.create_counter("failed_notification_counter")
 
-RABBIT_URI = "amqp://guest:guest@localhost/"
+# RABBIT_URI = "amqp://guest:guest@localhost/"
 DEAD_LETTER_EXCHANGE = "dead-letter-exchange"
 hostname = os.environ.get("HOSTNAME", "localhost")
 logger = logging.getLogger("notification_sender")
@@ -33,7 +33,7 @@ tag = {"instance": hostname}
 
 class NotificationSender:
 
-    def __init__(self, exchange:str, amqp_url: str = RABBIT_URI, dead_letter_exchange: str = DEAD_LETTER_EXCHANGE):
+    def __init__(self, exchange:str, amqp_url: str, dead_letter_exchange: str = DEAD_LETTER_EXCHANGE):
         self.exchange = exchange
         self.amqp_url = amqp_url
         self.dead_letter_exchange = dead_letter_exchange
