@@ -11,22 +11,28 @@ from marshmallow import ValidationError, validates_schema
 
 class NotificationStatus(Enum):
     WAITING = 1
-    SENDED = 2
-    EXPIRED = 3
-    SEND = 4
+    EXPIRED = 2
+    SEND = 3
 
 @dataclass(frozen=True)
 class Notification:
     id: UUID
-    user_id: UUID
     notification_sender: str
     message_title: str
     message_body: str
     schedule_expression: Optional[str]  = None
-    next_time: Optional[int] = None
     date: Optional[datetime] = None
     expiration_date_str: Optional[str] = None
     expiration_date: Optional[datetime] = datetime.fromisoformat(expiration_date_str) if expiration_date_str else None
+
+    def send_dict(self) -> Dict[str, Any]:
+        return {
+            "id": str(self.id),
+            "notification_sender": self.notification_sender,
+            "message_title": self.message_title,
+            "message_body": self.message_body
+        }
+
 
     @validates_schema
     def validate_expiration_date_str(self, data: Dict[str, Any], **kwargs: Dict[Any, Any]) -> None:
@@ -79,10 +85,7 @@ def get_status(notification: Notification, now: datetime) -> Result[Notification
         if expired(notification.expiration_date, notification.date, now):
             return Success(NotificationStatus.EXPIRED)
         elif match(notification.schedule_expression,notification.date, now):
-            if if_sent(notification.next_time, now):
-                return Success(NotificationStatus.SENDED)
-            else:
-                return Success(NotificationStatus.SEND)
+            return Success(NotificationStatus.SEND)
         else:
             return Success(NotificationStatus.WAITING)
     except Exception as err:
@@ -92,7 +95,10 @@ def json_to_notification(json: Any) -> Result[Notification, Any] :
     try:
         notification_schema = marshmallow_dataclass.class_schema(Notification)()
         notification = notification_schema.load(dict(json))
-        return Success(notification)
+        if isinstance(notification, Notification):
+            return Success(notification)
+        else:
+            return Failure("")
     except Exception as err:
         return Failure(err)
 

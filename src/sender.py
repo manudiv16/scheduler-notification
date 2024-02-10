@@ -4,7 +4,7 @@ import asyncio
 import logging
 import aio_pika
 
-from typing import Any
+from typing import Any, Dict
 from aio_pika.pool import Pool
 from notification import Notification
 from aio_pika.abc import AbstractQueue
@@ -12,6 +12,9 @@ from aio_pika.abc import AbstractChannel
 from aio_pika.abc import AbstractExchange
 from aio_pika.abc import AbstractRobustConnection
 from opentelemetry.metrics import get_meter_provider
+from event import EventDelete, SendableEventType, EventSend
+from returns.future import FutureResult, future_safe
+
 
 meter = get_meter_provider().get_meter("view-name-change", "0.1.2")
 sended_counter = meter.create_counter("send_notification_counter")
@@ -48,45 +51,43 @@ class NotificationSender:
         async with self.connection_pool.acquire() as connection:
             return await connection.channel() 
         
-    async def publish(self, notification: Notification) -> None:
-        async with self.channel_pool.acquire() as channel:  
-            routing_key = notification.notification_sender
-
-            exchange: AbstractExchange = await channel.declare_exchange(self.exchange, durable=True)
-            dle: AbstractExchange = await channel.declare_exchange(self.dead_letter_exchange, durable=True)
-
-            ready_queue: AbstractQueue = await channel.declare_queue(
-                routing_key, durable=True
+    
+    def _build_event(self, event: SendableEventType) -> Dict[str, Any]:
+        match event:
+            case EventDelete(notification_id=notification_id):
+                return {"command": "delete", "id": str(notification_id)}
+            case EventSend(notification=notification):
+                return notification.send_dict()
+            
+    async def __publish(self, msg: bytes, exchange: str, routing_key: str) -> None:
+        async with self.channel_pool.acquire() as channel: 
+            print(f"Publishing to {exchange} with routing key {routing_key}")
+            ex: AbstractExchange = await channel.declare_exchange(exchange, durable=True)
+            queue: AbstractQueue = await channel.declare_queue(routing_key, durable=True)
+            await queue.bind(ex, routing_key)
+            await ex.publish(
+                aio_pika.Message(
+                    body=msg,
+                    delivery_mode=aio_pika.DeliveryMode.PERSISTENT
+                ),
+                routing_key
             )
-            dead_letter_queue: AbstractQueue = await channel.declare_queue(
-                self.dead_letter_exchange, durable=True
-            )
+            await asyncio.sleep(0.1)
+            
+    @future_safe
+    async def publish(self, event: SendableEventType) -> str:
+        command = self._build_event(event)
+        print(f"Publishing event {event}")
+        print(f"Command to publish {command}")
+        noti = json.dumps(command, indent=2).encode('utf-8')
+        print(f"Notification to publish {noti}")
+        match event:
+            case EventDelete(_):
+                await self.__publish(noti, "notification-request-exchange", "notification-request-queue")
+                return f"Event {event} published"
+            case EventSend(notification=notification):
+                await self.__publish(noti, self.exchange, notification.notification_sender)
+                return f"Event {event} published"
 
-            await dead_letter_queue.bind(self.dead_letter_exchange)
-            await ready_queue.bind(exchange, routing_key)
-
-
-            try:
-                body: dict[str, Any]= {"title": notification.message_title, "body": notification.message_body}
-
-                body_json = json.dumps(body).encode("utf-8")
-                await exchange.publish(
-                    aio_pika.Message(
-                        body=body_json,
-                        delivery_mode=aio_pika.DeliveryMode.PERSISTENT
-                    ),
-                    routing_key
-                )
-                sended_counter.add(1, tag)
-            except Exception as e:
-                failed_notification_counter.add(1, tag)
-                logger.error(f"error: {e}")
-                await dle.publish(
-                    aio_pika.Message(
-                        body=body_json,
-                        delivery_mode=aio_pika.DeliveryMode.PERSISTENT
-                    ),
-                    routing_key
-                )
 
 __all__ = ["NotificationSender"]

@@ -1,8 +1,8 @@
 from uuid import UUID
 from returns.result import Result
-from returns.future import FutureResult, Future
-from typing import Any, AsyncIterator,Iterator, List
 from abc import ABC, abstractmethod
+from returns.future import FutureResult
+from typing import Any, AsyncIterator, List
 
 class Repository[T](ABC): # type: ignore
     
@@ -20,14 +20,14 @@ class Repository[T](ABC): # type: ignore
 
 
     @abstractmethod
-    async def update(self, id: UUID, **kwargs: object) -> None:
+    def update(self, id: UUID, **kwargs: object) -> FutureResult[UUID, Any]:
         raise NotImplementedError
 
     @abstractmethod
-    async def delete(self, id: UUID) -> None:
+    def delete(self, id: UUID) -> FutureResult[UUID, Any]:
         raise NotImplementedError
     
     @abstractmethod
-    async def delete_all(self) -> None:
+    def delete_all(self) -> FutureResult[str, Any]:
         raise NotImplementedError
     
