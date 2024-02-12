@@ -1,8 +1,10 @@
-from typing import Any
+from uuid import UUID
+from typing import Any, Dict
 from handlers import Handler
 from dataclasses import dataclass
 from repository import Repository
 from returns.io import IOResult, IOFailure
+from notification import json_to_notification
 from returns.result import Result, Success, Failure
 from event import EventAdd, EventUpdate, EventDelete, EventType
 
@@ -15,7 +17,7 @@ class NotificationDBHandler(Handler[EventType]):
             case Success(EventAdd(notification=notification)):
                 added = await self.connection.add(object=notification)
                 return added.map(lambda _: f"Notification {notification.id} added")\
-                            .alt(lambda _: f"Error adding notification {notification.id} to database")
+                            .alt(lambda e: f"Error adding notification {notification.id} to database, the error is {e}")
             case Success(EventUpdate(id=id, 
                                      date=date, 
                                     message_body=message_body, 
@@ -32,21 +34,33 @@ class NotificationDBHandler(Handler[EventType]):
                                                       schedule_expression=schedule_expression
                                                       )
                 return update.map(lambda _: f"Notification {id} updated")\
-                             .alt(lambda _: f"Error updating notification {id} to database")
+                             .alt(lambda e: f"Error updating notification {id} to database, the error is {e}")
             
             case Success(EventDelete(notification_id=notification_id)):
                 deleted = await self.connection.delete(id=notification_id)
                 return deleted.map(lambda _: f"Notification {notification_id} deleted")\
-                                .alt(lambda _: f"Error deleting notification {notification_id} to database")
+                              .alt(lambda e: f"Error deleting notification {notification_id} to database, the error is {e}")
             case Failure(error):
                 return IOFailure(error)
             case _:
                 return IOFailure("Invalid message")
             
+def message_to_eventtype(message: Dict[str, Any])  -> Result[EventType, Any]:
+        match message:
+            case {'command': 'add', 'notification': notification}:
+                return json_to_notification(notification).map(lambda x: EventAdd(notification=x))
+            case {'command': 'update', 'id': id, **rest }:
+                return Success(EventUpdate(id=UUID(id), **rest))
+            case {'command': 'delete', 'id': notification_id}:
+                return Success(EventDelete(notification_id=UUID(notification_id)))
+            case {'command': 'remove', 'id': notification_id}:
+                return Success(EventDelete(notification_id=UUID(notification_id)))
+            case _:
+                return Failure("Fail to parse message to event type")
+
 
 async def main() -> None:
     import logging
-    from handlers import message_to_eventtype
     from notification_repository import NotificationRepository
     from consumer import NotificationConsumer
 

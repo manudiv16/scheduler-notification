@@ -4,17 +4,17 @@ import asyncio
 import logging
 import aio_pika
 
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 from aio_pika.pool import Pool
-from notification import Notification
+from notification import send_dict, notification_to_dict
 from aio_pika.abc import AbstractQueue
+from returns.future import future_safe
 from aio_pika.abc import AbstractChannel
 from aio_pika.abc import AbstractExchange
 from aio_pika.abc import AbstractRobustConnection
 from opentelemetry.metrics import get_meter_provider
 from event import EventDelete, SendableEventType, EventSend
-from returns.future import FutureResult, future_safe
-
+from notification import Notification
 
 meter = get_meter_provider().get_meter("view-name-change", "0.1.2")
 sended_counter = meter.create_counter("send_notification_counter")
@@ -52,41 +52,42 @@ class NotificationSender:
             return await connection.channel() 
         
     
-    def _build_event(self, event: SendableEventType) -> Dict[str, Any]:
+    def __build_event(self, event: SendableEventType) -> Dict[str, Any]:
         match event:
             case EventDelete(notification_id=notification_id):
                 return {"command": "delete", "id": str(notification_id)}
             case EventSend(notification=notification):
-                return notification.send_dict()
+                return send_dict(notification)
+            case Notification() as n:
+                return notification_to_dict(n)
             
-    async def __publish(self, msg: bytes, exchange: str, routing_key: str) -> None:
+    async def __publish(self, msg: bytes, exchange: str, routing_key: str, expiration: Optional[int] = None ) -> None:
         async with self.channel_pool.acquire() as channel: 
-            print(f"Publishing to {exchange} with routing key {routing_key}")
             ex: AbstractExchange = await channel.declare_exchange(exchange, durable=True)
             queue: AbstractQueue = await channel.declare_queue(routing_key, durable=True)
             await queue.bind(ex, routing_key)
             await ex.publish(
                 aio_pika.Message(
                     body=msg,
-                    delivery_mode=aio_pika.DeliveryMode.PERSISTENT
+                    delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
+                    expiration=expiration
                 ),
                 routing_key
             )
-            await asyncio.sleep(0.1)
             
     @future_safe
     async def publish(self, event: SendableEventType) -> str:
-        command = self._build_event(event)
-        print(f"Publishing event {event}")
-        print(f"Command to publish {command}")
+        command = self.__build_event(event)
         noti = json.dumps(command, indent=2).encode('utf-8')
-        print(f"Notification to publish {noti}")
         match event:
             case EventDelete(_):
                 await self.__publish(noti, "notification-request-exchange", "notification-request-queue")
                 return f"Event {event} published"
             case EventSend(notification=notification):
                 await self.__publish(noti, self.exchange, notification.notification_sender)
+                return f"Event {event} published"
+            case Notification():
+                await self.__publish(noti, self.exchange, self.exchange, 60)
                 return f"Event {event} published"
 
 

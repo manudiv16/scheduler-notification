@@ -25,13 +25,6 @@ class Notification:
     expiration_date_str: Optional[str] = None
     expiration_date: Optional[datetime] = datetime.fromisoformat(expiration_date_str) if expiration_date_str else None
 
-    def send_dict(self) -> Dict[str, Any]:
-        return {
-            "id": str(self.id),
-            "notification_sender": self.notification_sender,
-            "message_title": self.message_title,
-            "message_body": self.message_body
-        }
 
 
     @validates_schema
@@ -67,18 +60,7 @@ def expired(expiration_date: Optional[datetime], date: Optional[datetime], now: 
         return date < now
     else:
         return False
-    
-def if_sent(next_time:  Optional[int], now: datetime) -> bool:
-    if next_time:
-        timestamp: int = next_time
-        next : datetime = datetime.fromtimestamp(timestamp)
-        return next > now 
-    return False
 
-
-def get_next_time(expression: str, now: datetime) -> datetime:
-    cron = croniter(expression, now)
-    return cron.get_next(datetime) # type: ignore
 
 def get_status(notification: Notification, now: datetime) -> Result[NotificationStatus, Any]:
     try:
@@ -102,5 +84,24 @@ def json_to_notification(json: Any) -> Result[Notification, Any] :
     except Exception as err:
         return Failure(err)
 
+def send_dict(notification: Notification) -> Dict[str, Any]:
+    return {
+        "id": str(notification.id),
+        "notification_sender": notification.notification_sender,
+        "message_title": notification.message_title,
+        "message_body": notification.message_body
+    }
 
-__all__ = [ "Notification", "NotificationStatus", "get_status", "json_to_notification" ]
+def notification_to_dict(notification: Notification) -> Dict[str, Any]:
+    unfilter_dict = {
+        "id": str(notification.id),
+        "notification_sender": notification.notification_sender,
+        "message_title": notification.message_title,
+        "message_body": notification.message_body,
+        "schedule_expression": notification.schedule_expression,
+        "date": notification.date.isoformat() if notification.date else None,
+        "expiration_date": notification.expiration_date.isoformat() if notification.expiration_date else None
+    }
+    return {k: v for k, v in unfilter_dict.items() if v is not None}
+
+__all__ = [ "Notification", "NotificationStatus", "get_status", "json_to_notification", "send_dict" ]

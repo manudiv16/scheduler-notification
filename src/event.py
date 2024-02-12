@@ -19,12 +19,9 @@ class EventUpdate:
     expiration_date_str: Optional[str] = None
     expiration_date: Optional[datetime] = datetime.fromisoformat(expiration_date_str) if expiration_date_str else None
 
-    
 @dataclass(frozen=True)
 class EventSend:
     notification: Notification
-    
-    
 
 @dataclass(frozen=True)
 class EventDelete:
@@ -32,7 +29,7 @@ class EventDelete:
 
 EventType = EventAdd | EventUpdate | EventDelete
 
-SendableEventType = EventSend | EventDelete
+SendableEventType = EventSend | EventDelete | Notification
 
 Event = Notification | EventType
 

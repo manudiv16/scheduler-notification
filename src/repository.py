@@ -15,7 +15,7 @@ class Repository[T](ABC): # type: ignore
         raise NotImplementedError
 
     @abstractmethod
-    def get_all(self) -> AsyncIterator[List[Result[T, Any]]]:
+    def get_all(self, batch_size: int) -> AsyncIterator[List[Result[T, Any]]]:
         raise NotImplementedError
 
 

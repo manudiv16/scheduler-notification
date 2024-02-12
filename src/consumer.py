@@ -22,8 +22,6 @@ tag = {"hostname": hostname }
 logger = logging.getLogger("notification_consumer")
 logger.setLevel(logging.DEBUG)
 
-
-
 @dataclass
 class NotificationConsumer:
     rabbitmq_request_exchange: str
@@ -67,7 +65,6 @@ class NotificationConsumer:
                     ),
                     routing_key=self.rabbitmq_dead_letter_exchange
                 )
-                await asyncio.sleep(0.1)
         
     async def consume(self, transformer: Callable[[Dict[str, Any]], Result[Event, Any]], handler: Handler) -> None: 
         async with self.channel_pool.acquire() as channel: 
@@ -109,10 +106,5 @@ class NotificationConsumer:
                             logger.error(f"Error consuming: {e}")
                             await message.ack()
                             continue
-                        
-
-                await asyncio.sleep(0.1)
-            
-
 
 __all__ = ["NotificationConsumer"]

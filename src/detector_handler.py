@@ -1,6 +1,6 @@
-from typing import Any
-from datetime import datetime
+from typing import Any, Dict
 from handlers import Handler
+from datetime import datetime
 from returns.result import Result
 from dataclasses import dataclass
 from notification import Notification
@@ -8,9 +8,9 @@ from sender import NotificationSender
 from returns.future import future_safe
 from returns.io import IOResult, IOFailure
 from returns.result import Success, Failure
+from notification import json_to_notification
 from notification import NotificationStatus, get_status
 from event import EventDelete, SendableEventType, EventSend
-
 
 @dataclass
 class NotificationDetector(Handler[Notification]):
@@ -27,7 +27,6 @@ class NotificationDetector(Handler[Notification]):
             case _:
                 return IOFailure("Invalid message")
 
-
     @future_safe
     async def consume_notification(self, notification: Notification, status: NotificationStatus) -> str:
         match status:
@@ -42,7 +41,6 @@ class NotificationDetector(Handler[Notification]):
                 await self.sender.publish(event_send)
                 return f"Notification {notification.id} is send"
 
-            
     def _create_event(self, notification: Notification, status: NotificationStatus) -> SendableEventType:
         match status:
             case NotificationStatus.EXPIRED:
@@ -52,10 +50,11 @@ class NotificationDetector(Handler[Notification]):
             case _:
                 return EventDelete(notification_id=notification.id)
 
-            
+def message_to_notification(message: Dict[str, Any])  -> Result[Notification, Any]:
+        return json_to_notification(message)
+
 async def main() -> None:
     import logging
-    from handlers import message_to_notification
     from consumer import NotificationConsumer
 
     

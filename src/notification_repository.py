@@ -8,7 +8,6 @@ from typing import Any, AsyncIterator, List, Optional
 from notification import Notification, json_to_notification
 from returns.future import FutureResult, future_safe, future
 
-
 class NotificationRepository(Repository[Notification]): # type: ignore
     def __init__(self, dbname: str, user: str, password: str, host: str, port: int) -> None:
         self.dbname = dbname
@@ -23,7 +22,6 @@ class NotificationRepository(Repository[Notification]): # type: ignore
         self = cls(dbname, user, password, host, port)
         await self.create_pool()
         return self
-
 
     @asynccontextmanager
     async def connect(self) -> AsyncIterator[asyncpg.Connection]:  
@@ -70,7 +68,6 @@ class NotificationRepository(Repository[Notification]): # type: ignore
             )
             VALUES ($1, $2, $3, $4, $5, $6, $7);
         '''
-        
         async with self.connect() as connection:
             await connection.execute(insert_query, 
                 object.id, object.message_body, object.message_title, object.notification_sender,
@@ -80,7 +77,6 @@ class NotificationRepository(Repository[Notification]): # type: ignore
         
     def get(self, id: UUID) -> FutureResult[Notification, Any]:
         return FutureResult.from_typecast(self._get(id))
-    
 
     @future
     async def _get(self, id: UUID) -> Result[Notification, Any]:
@@ -97,7 +93,7 @@ class NotificationRepository(Repository[Notification]): # type: ignore
                     return json_to_notification(row)
         except Exception as e:
             return Failure(e)
-    
+
     # refactor to use cursor instead of offset
     async def get_all(self, batch_size: int = 10) -> AsyncIterator[List[Result[Notification, Any]]]: 
         offset = 0
@@ -122,7 +118,6 @@ class NotificationRepository(Repository[Notification]): # type: ignore
             if id_updated is None:
                 raise Exception("Notification not found")
             return UUID(str(id_updated))
-
     
     @future_safe
     async def delete(self, id: UUID) -> UUID:
@@ -136,7 +131,6 @@ class NotificationRepository(Repository[Notification]): # type: ignore
                 raise Exception("Notification not found")
             return UUID(str(id_deleted))
 
-
     @future_safe
     async def delete_all(self) -> str:
         delete_query = '''
@@ -149,6 +143,7 @@ __all__ = ["NotificationRepository"]
 
 async def main() -> None:
     from datetime import datetime
+    import uuid
     db = await NotificationRepository.create(
                 dbname='postgres',
                 user='postgres',
@@ -158,9 +153,9 @@ async def main() -> None:
             )
     await db.create_notification_table()
     # await db.delete_all()
-    for i in range(10):
+    for i in range(1200):
         await db.add(Notification(
-            id=UUID(f"e3e2b2e{i}-1b36-4c0b-9d6c-6d1d7f6e334d"),
+            id=uuid.uuid4(),
             message_body="send this message every 2 minutes",
             message_title="title",
             notification_sender="sender",
@@ -173,7 +168,7 @@ async def main() -> None:
     async for notifications in db.get_all():
         for notification in notifications:
             a.append(notification)
-    print(len(a))
+    # print(a)
     
 
 
